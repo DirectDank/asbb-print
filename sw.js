@@ -1,5 +1,5 @@
 // ASBB Print service worker: offline use and receiving files from the Android share menu.
-const VERSION = 'asbb-print-v1.2.3';
+const VERSION = 'asbb-print-v1.2.4';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/store.js', 'js/image.js', 'js/printer.js', 'js/designer.js', 'js/lzo.js',
@@ -8,7 +8,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+    // Fetch every file fresh ('reload'), not from the phone's own copy: GitHub lets phones keep files for 10 minutes,
+  // which once saved the old version's files under the new version's name.
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -56,7 +58,7 @@ self.addEventListener('fetch', (e) => {
   // App files: serve from cache straight away, refresh in the background.
   e.respondWith(caches.open(VERSION).then(async (c) => {
     const hit = await c.match(e.request, { ignoreSearch: e.request.mode === 'navigate' });
-    const net = fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; }).catch(() => null);
+    const net = fetch(e.request, { cache: 'no-cache' }).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; }).catch(() => null);
     return hit || (await net) || c.match('index.html');
   }));
 });

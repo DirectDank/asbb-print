@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support, btLog } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.2.3';
+const VERSION = '1.2.4';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1017,7 +1017,7 @@ async function start() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (hadController && !reloaded && !printing) { reloaded = true; location.reload(); }
     });
-    navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
   }
 }
 start();
