@@ -76,13 +76,33 @@ class SerialTransport {
       logBt('opening Bluetooth Classic');
       await this.port.open({ baudRate: 115200, bufferSize: 65536 });
       logBt('Bluetooth Classic open');
+      this.listen();
     } catch (e) {
       logBt(`Bluetooth Classic wouldn't open: ${errText(e)}`);
       throw new Error('it wouldn’t connect over Bluetooth Classic. Tap the printer at the top, Disconnect, then Connect Bluetooth printer (Bluetooth LE) and pick it');
     }
   }
+  // Log whatever the printer sends back (Labelife's printers answer 7E 01 7E for "got it", 7E 00 7E for "send again").
+  async listen() {
+    if (this.listening || !this.port.readable) return;
+    this.listening = true;
+    try {
+      const reader = this.port.readable.getReader();
+      this.reader = reader;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.length) logBt(`printer says: ${Array.from(value.slice(0, 40), (b) => b.toString(16).padStart(2, '0')).join(' ')}`);
+      }
+    } catch (e) {
+      logBt(`stopped listening: ${errText(e)}`);
+    } finally {
+      this.listening = false;
+    }
+  }
   async write(data) {
     await this.open();
+    logBt(`sending ${data.length} bytes over Bluetooth Classic`);
     const writer = this.port.writable.getWriter();
     try {
       const chunk = 8192;
@@ -91,11 +111,19 @@ class SerialTransport {
         await writer.write(data.subarray(i, i + chunk));
       }
       await writer.ready;
+      logBt(`all ${data.length} bytes sent over Bluetooth Classic`);
+    } catch (e) {
+      logBt(`Bluetooth Classic send failed: ${errText(e)}`);
+      throw e;
     } finally {
       writer.releaseLock();
     }
   }
-  async close() { try { await this.port.close(); } catch { /* already closed */ } }
+  async close() {
+    try { await this.reader?.cancel(); } catch { /* ignore */ }
+    try { await this.port.close(); } catch { /* already closed */ }
+    logBt('Bluetooth Classic closed');
+  }
 }
 
 function portName(port) {
