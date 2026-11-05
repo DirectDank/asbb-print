@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -135,7 +135,7 @@ async function ensurePrinter() {
 function printOpts(size) {
   return {
     wMm: size.w, hMm: size.h, gapType: settings.gapType, gapMm: settings.gapMm, density: settings.density, speed: settings.speed,
-    offsetXmm: settings.offsetXmm, offsetYmm: settings.offsetYmm, flip: settings.flip, invert: settings.invert,
+    offsetXmm: settings.offsetXmm, offsetYmm: settings.offsetYmm, flip: settings.flip, invert: settings.invert, format: settings.format,
   };
 }
 
@@ -209,6 +209,7 @@ function openSettings() {
   $('#sSpeed').value = settings.speed;
   $('#sOffX').value = settings.offsetXmm; $('#sOffY').value = settings.offsetYmm;
   $('#sFlip').checked = settings.flip; $('#sInvert').checked = settings.invert;
+  $('#sFormat').value = settings.format || 'lzo';
   $('#installBtn2').hidden = !installEvt;
   renderCustomSizes();
   updatePrinterUi();
@@ -225,6 +226,7 @@ $('#sOffX').addEventListener('change', (e) => { settings.offsetXmm = Number(e.ta
 $('#sOffY').addEventListener('change', (e) => { settings.offsetYmm = Number(e.target.value) || 0; persist(); });
 $('#sFlip').addEventListener('change', (e) => { settings.flip = e.target.checked; persist(); });
 $('#sInvert').addEventListener('change', (e) => { settings.invert = e.target.checked; persist(); });
+$('#sFormat').addEventListener('change', (e) => { settings.format = e.target.value; persist(); });
 function renderCustomSizes() {
   $('#customList').innerHTML = settings.customSizes.map((s) => `<span>${esc(s.name)} <button data-del="${esc(s.id)}" aria-label="Remove ${esc(s.name)}">✕</button></span>`).join('');
 }

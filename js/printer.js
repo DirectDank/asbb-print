@@ -1,8 +1,11 @@
+import { lzo1xCompress } from './lzo.js';
+
 // Talking to the printer.
 // The Phomemo PM-241-BT speaks TSPL. Over Bluetooth it uses Bluetooth Classic (a serial port, SPP),
 // which Chrome on Android reaches through the Web Serial API. BLE and USB are offered as fallbacks.
 
 export const SPP_UUID = '00001101-0000-1000-8000-00805f9b34fb';
+export const SPP_INSECURE = 'fa87c0d0-afac-11de-8a39-0800200c9a66';
 
 const BLE_SERVICES = [
   '0000ff00-0000-1000-8000-00805f9b34fb',
@@ -28,11 +31,11 @@ class SerialTransport {
   constructor(port, label) { this.port = port; this.kind = 'serial'; this.name = label || 'Bluetooth printer'; this.writer = null; }
   static async request() {
     const port = await navigator.serial.requestPort({
-      filters: [{ bluetoothServiceClassId: SPP_UUID }],
-      allowedBluetoothServiceClassIds: [SPP_UUID],
+      filters: [{ bluetoothServiceClassId: SPP_UUID }, { bluetoothServiceClassId: SPP_INSECURE }],
+      allowedBluetoothServiceClassIds: [SPP_UUID, SPP_INSECURE],
     }).catch(async (e) => {
       // Older Chrome builds may not accept the Bluetooth filter; fall back to any port.
-      if (e && e.name === 'TypeError') return navigator.serial.requestPort({ allowedBluetoothServiceClassIds: [SPP_UUID] });
+      if (e && e.name === 'TypeError') return navigator.serial.requestPort({ allowedBluetoothServiceClassIds: [SPP_UUID, SPP_INSECURE] });
       throw e;
     });
     const t = new SerialTransport(port, portName(port));
@@ -110,15 +113,15 @@ class BleTransport {
   }
   async write(data) {
     await this.open();
-    const chunk = 180;
-    const noResp = this.ch.properties.writeWithoutResponse;
+    // Write-with-response gives natural flow control (what Labelife does); fall back to without-response.
+    const withResp = this.ch.properties.write;
+    const chunk = withResp ? 240 : 180;
     for (let i = 0; i < data.length; i += chunk) {
       const part = data.subarray(i, i + chunk);
-      if (noResp) {
+      if (withResp) await this.ch.writeValueWithResponse(part);
+      else {
         await this.ch.writeValueWithoutResponse(part);
-        if ((i / chunk) % 20 === 19) await sleep(15);
-      } else {
-        await this.ch.writeValueWithResponse(part);
+        if ((i / chunk) % 8 === 7) await sleep(20);
       }
     }
   }
@@ -206,41 +209,52 @@ export class Printer {
 }
 
 // ---------- TSPL ----------
+// Byte layout follows what Labelife sends to the PM-241 family ("tspl-c1"): a leading CRLF, then
+// DENSITY / SPEED / REFERENCE / OFFSET / SIZE / GAP / DIRECTION / CLS, a BITMAP in mode 3
+// (LZO-compressed, 1 = black dot), and PRINT 1,<copies>. One full job per page.
 // pages: array of { mono: {w,h,wb,bits}, copies? }  opts: printer settings + label size in mm
 export function buildTspl(pages, opts) {
   const enc = new TextEncoder();
   const parts = [];
-  const line = (s) => parts.push(enc.encode(s + '\r\n'));
-  const fmt = (n) => (Math.round(n * 10) / 10).toString();
-  line(`SIZE ${fmt(opts.wMm)} mm,${fmt(opts.hMm)} mm`);
-  if (opts.gapType === 'continuous') line('GAP 0 mm,0 mm');
-  else if (opts.gapType === 'bline') line(`BLINE ${fmt(opts.gapMm)} mm,0 mm`);
-  else line(`GAP ${fmt(opts.gapMm)} mm,0 mm`);
-  line(`DIRECTION ${opts.flip ? 1 : 0},0`);
-  line('REFERENCE 0,0');
-  if (opts.offsetYmm) line(`SHIFT ${Math.round((opts.offsetYmm / 25.4) * 203)}`);
-  line(`DENSITY ${Math.max(0, Math.min(15, Math.round(opts.density ?? 8)))}`);
-  if (opts.speed) line(`SPEED ${opts.speed}`);
-  line('SET TEAR ON');
-  const xOff = Math.max(0, Math.round(((opts.offsetXmm || 0) / 25.4) * 203));
+  const txt = (s) => parts.push(enc.encode(s));
+  const mm2 = (n) => (Math.round(n * 100) / 100).toFixed(2);
+  const plain = opts.format === 'plain';
   for (const p of pages) {
     const m = p.mono;
-    line('CLS');
-    // TSPL bitmaps: a 0 bit prints a black dot, a 1 bit stays white. Our packed data uses 1 = black, so invert
-    // unless the "invert" setting says this printer works the other way.
-    const data = new Uint8Array(m.bits.length);
-    if (opts.invert) data.set(m.bits);
-    else for (let i = 0; i < data.length; i++) data[i] = ~m.bits[i] & 0xff;
-    // pad bits past the image width must be white
-    const padBits = m.wb * 8 - m.w;
-    if (padBits && !opts.invert) {
-      const mask = (1 << padBits) - 1;
-      for (let y = 0; y < m.h; y++) data[y * m.wb + m.wb - 1] |= mask;
+    txt('\r\n');
+    txt(`DENSITY ${Math.max(0, Math.min(15, Math.round(opts.density ?? 8)))}\r\n`);
+    if (opts.speed) txt(`SPEED ${opts.speed}\r\n`);
+    txt('REFERENCE 0,0\r\n');
+    txt('OFFSET 0 mm\r\n');
+    if (opts.offsetYmm) txt(`SHIFT ${Math.round((opts.offsetYmm / 25.4) * 203)}\r\n`);
+    txt(`SIZE ${Math.max(1, Math.round(opts.wMm))} mm,${Math.max(1, Math.round(opts.hMm))} mm\r\n`);
+    if (opts.gapType === 'continuous') txt('GAP 0.00 mm,0.00 mm\r\n');
+    else if (opts.gapType === 'bline') txt(`BLINE ${mm2(opts.gapMm)} mm,0.00 mm\r\n`);
+    else txt(`GAP ${mm2(opts.gapMm)} mm,0.00 mm\r\n`);
+    txt(`DIRECTION ${opts.flip ? 1 : 0},0\r\n`);
+    txt('CLS\r\n');
+    // Shift right by padding blank columns on the left.
+    const xOff = Math.max(0, Math.round(((opts.offsetXmm || 0) / 25.4) * 203));
+    const raster = shiftRaster(m, xOff);
+    // Phomemo firmware: bit 1 = black. Standard TSPL: bit 0 = black. "invert" flips whichever is in use.
+    const blackIsOne = plain ? !!opts.invert : !opts.invert;
+    let data = raster.bits;
+    if (!blackIsOne) {
+      data = new Uint8Array(raster.bits.length);
+      for (let i = 0; i < data.length; i++) data[i] = ~raster.bits[i] & 0xff;
+      const padBits = raster.wb * 8 - raster.w;
+      if (padBits) { const mask = (1 << padBits) - 1; for (let y = 0; y < raster.h; y++) data[y * raster.wb + raster.wb - 1] |= mask; }
     }
-    parts.push(enc.encode(`BITMAP ${xOff},0,${m.wb},${m.h},0,`));
-    parts.push(data);
-    parts.push(enc.encode('\r\n'));
-    line(`PRINT ${Math.max(1, p.copies || 1)},1`);
+    if (plain) {
+      txt(`BITMAP 0,0,${raster.wb},${raster.h},0,`);
+      parts.push(data);
+    } else {
+      const z = lzo1xCompress(data);
+      txt(`BITMAP 0,0,${raster.wb},${raster.h},3,${z.length},`);
+      parts.push(z);
+    }
+    txt('\r\n');
+    txt(`PRINT 1,${Math.max(1, p.copies || 1)}\r\n`);
   }
   let total = 0;
   for (const p of parts) total += p.length;
@@ -250,9 +264,19 @@ export function buildTspl(pages, opts) {
   return out;
 }
 
+function shiftRaster(m, xOff) {
+  if (!xOff) return m;
+  const w = m.w + xOff, wb = Math.ceil(w / 8);
+  const bits = new Uint8Array(wb * m.h);
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    if (m.bits[y * m.wb + (x >> 3)] & (0x80 >> (x & 7))) { const nx = x + xOff; bits[y * wb + (nx >> 3)] |= 0x80 >> (nx & 7); }
+  }
+  return { w, h: m.h, wb, bits };
+}
+
 // A feed-only command so the printer can find the next gap (handy after loading new labels).
 export function buildFeed(opts) {
   const enc = new TextEncoder();
-  const fmt = (n) => (Math.round(n * 10) / 10).toString();
-  return enc.encode(`SIZE ${fmt(opts.wMm)} mm,${fmt(opts.hMm)} mm\r\nGAP ${fmt(opts.gapMm)} mm,0 mm\r\nFORMFEED\r\n`);
+  const mm2 = (n) => (Math.round(n * 100) / 100).toFixed(2);
+  return enc.encode(`\r\nSIZE ${Math.round(opts.wMm)} mm,${Math.round(opts.hMm)} mm\r\nGAP ${mm2(opts.gapMm)} mm,0.00 mm\r\nFORMFEED\r\n`);
 }

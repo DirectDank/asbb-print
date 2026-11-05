@@ -1,8 +1,8 @@
 // ASBB Print service worker: offline use and receiving files from the Android share menu.
-const VERSION = 'asbb-print-v1.0.2';
+const VERSION = 'asbb-print-v1.1.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/store.js', 'js/image.js', 'js/printer.js', 'js/designer.js',
+  'js/app.js', 'js/store.js', 'js/image.js', 'js/printer.js', 'js/designer.js', 'js/lzo.js',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'vendor/qrcode.js', 'vendor/JsBarcode.all.min.js',
   'img/asbb-logo.svg', 'img/asbb-logo-mono.png', 'img/icon-192.png', 'img/icon-512.png',
 ];

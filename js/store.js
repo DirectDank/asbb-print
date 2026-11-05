@@ -56,6 +56,7 @@ export const DEFAULT_SETTINGS = {
   offsetYmm: 0,
   flip: false,
   invert: false,
+  format: 'lzo', // lzo = Phomemo/Labelife style (compressed), plain = standard TSPL
   transport: '',
   customSizes: [],
   lastBackup: 0,
