@@ -24,6 +24,17 @@ export const support = {
   usb: typeof navigator !== 'undefined' && 'usb' in navigator,
 };
 
+// A short record of what happened over Bluetooth, shown in Settings so it can be copied and sent for help.
+export const btLog = [];
+const t0 = Date.now();
+export function logBt(msg) {
+  const line = `${((Date.now() - t0) / 1000).toFixed(1)}s ${msg}`;
+  btLog.push(line);
+  if (btLog.length > 120) btLog.splice(0, btLog.length - 120);
+  try { window.dispatchEvent(new Event('asbb-btlog')); } catch { /* not in a page */ }
+}
+const errText = (e) => (e && (e.name ? `${e.name}: ${e.message}` : e.message)) || String(e);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(what)), ms))]);
 
@@ -62,8 +73,11 @@ class SerialTransport {
   async open() {
     if (this.port.writable) return;
     try {
+      logBt('opening Bluetooth Classic');
       await this.port.open({ baudRate: 115200, bufferSize: 65536 });
+      logBt('Bluetooth Classic open');
     } catch (e) {
+      logBt(`Bluetooth Classic wouldn't open: ${errText(e)}`);
       throw new Error('it wouldn’t connect over Bluetooth Classic. Tap the printer at the top, Disconnect, then Connect Bluetooth printer (Bluetooth LE) and pick it');
     }
   }
@@ -110,28 +124,65 @@ class BleTransport {
   }
   async open() {
     if (this.ch && this.device.gatt.connected) return;
+    if (!this.watching) {
+      this.watching = true;
+      this.device.addEventListener('gattserverdisconnected', () => logBt('printer dropped the Bluetooth link'));
+    }
+    logBt(`connecting to ${this.name}`);
     const server = await this.device.gatt.connect();
+    logBt('connected; looking for print channels');
     const services = await server.getPrimaryServices();
+    logBt(`services: ${services.map((s) => s.uuid.slice(4, 8)).join(', ') || 'none'}`);
     // Known print channels first (Phomemo/Aimo use ff00/ff02, others ffe0/ffe1, ae30/ae01, 18f0/2af1...).
-    const preferred = ['ff02', 'ffe1', 'ae01', '2af1', 'fec7', 'ae3b', '49535343-8841', 'bef8d6c9'];
+    const preferred = ['ff02', 'ffe1', 'ae01', '2af1', 'fec7', 'ae3b', 'ff03', '49535343-8841', 'bef8d6c9'];
     const found = [];
+    const notify = [];
     for (const sv of services) {
       let chars = [];
-      try { chars = await sv.getCharacteristics(); } catch { continue; }
-      for (const c of chars) if (c.properties.writeWithoutResponse || c.properties.write) found.push(c);
+      try { chars = await sv.getCharacteristics(); } catch (e) { logBt(`${sv.uuid.slice(4, 8)}: ${errText(e)}`); continue; }
+      for (const c of chars) {
+        const p = c.properties;
+        const has = ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter((k) => p[k]).join('+');
+        logBt(`  ${sv.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)} ${has}`);
+        if (p.writeWithoutResponse || p.write) found.push(c);
+        if (p.notify || p.indicate) notify.push(c);
+      }
     }
     this.channels = found.map((c) => `${c.service.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)}`);
-    if (!found.length) throw new Error('Connected, but this printer has no Bluetooth LE print channel. Use \u201cBluetooth\u201d instead.');
+    if (!found.length) throw new Error('Connected, but this printer has no Bluetooth LE print channel. Use \u201cBluetooth Classic\u201d instead.');
     const rank = (c) => { const i = preferred.findIndex((p) => c.uuid.includes(p)); return i < 0 ? 99 : i; };
     found.sort((a, b) => rank(a) - rank(b));
-    this.ch = found[0];
+    this.found = found;
+    this.pick = Math.min(this.pick ?? 0, found.length - 1);
+    this.ch = found[this.pick];
     this.channel = `${this.ch.service.uuid.slice(4, 8)}/${this.ch.uuid.slice(4, 8)}`;
+    // Labelife listens on the printer's reply channel (ff01) before sending; some printers won't take data until
+    // someone is listening, so switch replies on for every channel in the print service that offers them.
+    for (const c of notify.filter((c) => c.service.uuid === this.ch.service.uuid)) {
+      try {
+        if (!c.listening) {
+          c.addEventListener('characteristicvaluechanged', (ev) => {
+            const v = new Uint8Array(ev.target.value.buffer);
+            const text = Array.from(v, (b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : `<${b.toString(16).padStart(2, '0')}>`)).join('');
+            logBt(`printer says (${c.uuid.slice(4, 8)}): ${text.slice(0, 80)}`);
+          });
+          c.listening = true;
+        }
+        await c.startNotifications();
+        logBt(`listening on ${c.uuid.slice(4, 8)}`);
+      } catch (e) {
+        logBt(`couldn't listen on ${c.uuid.slice(4, 8)}: ${errText(e)}`);
+      }
+    }
+    await sleep(300); // give the printer a moment after connecting before sending
+    logBt(`using ${this.channel} (${this.ch.properties.write ? 'with' : 'without'} response)`);
   }
   async write(data) {
     await this.open();
+    logBt(`sending ${data.length} bytes on ${this.channel}`);
     // Write-with-response gives natural flow control (what Labelife does); fall back to without-response.
     // A printer that refuses a piece ("GATT operation failed") is sent smaller pieces, down to 20 bytes, then
-    // without-response; the size that works is kept for the next print.
+    // without-response, then the next write channel; what works is kept for the next print.
     const sizes = [240, 180, 100, 60, 20];
     let size = this.size ?? 0;
     let withResp = this.withResp ?? !!this.ch.properties.write;
@@ -144,17 +195,30 @@ class BleTransport {
           await this.ch.writeValueWithoutResponse(part);
           if ((i / sizes[size]) % 8 === 7) await sleep(20);
         }
+        if (i === 0 || fails) logBt(`  piece at ${i} (${part.length} bytes, ${withResp ? 'with' : 'without'} response) ok`);
         i += part.length;
         fails = 0;
       } catch (e) {
-        if (++fails > 12) throw e;
+        logBt(`  piece at ${i} (${part.length} bytes, ${withResp ? 'with' : 'without'} response) failed: ${errText(e)}; link ${this.device.gatt.connected ? 'still up' : 'dropped'}`);
+        if (++fails > 14) throw e;
         if (size < sizes.length - 1) size++;
         else if (withResp && this.ch.properties.writeWithoutResponse) { withResp = false; size = 0; }
-        else if (fails > 3) throw e;
-        await sleep(150);
-        if (!this.device.gatt.connected) { this.ch = null; await this.open(); }
+        else if (this.found && this.pick < this.found.length - 1) {
+          this.pick++;
+          this.ch = null;
+          size = 0;
+          withResp = true;
+          logBt('trying the next write channel');
+        } else if (fails > 3) throw e;
+        await sleep(300);
+        if (!this.ch || !this.device.gatt.connected) {
+          this.ch = null;
+          await this.open();
+          withResp = withResp && !!this.ch.properties.write;
+        }
       }
     }
+    logBt(`all ${data.length} bytes sent`);
     this.size = size;
     this.withResp = withResp;
   }
@@ -240,6 +304,7 @@ export class Printer {
     try {
       await this.t.write(bytes);
     } catch (e) {
+      logBt(`print failed: ${errText(e)}; trying once more`);
       // One reconnect attempt (printer may have slept). If that fails too, it shows as not connected, so the next
       // press of Print asks for it to be connected again rather than trying a dead link.
       try { await this.t.close(); } catch { /* ignore */ }

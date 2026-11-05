@@ -179,3 +179,5 @@ input[type="range"] { width: 100%; accent-color: var(--pink); }
   .modal { align-items: center; }
   .modal-card { border-radius: 20px; border-bottom: 1px solid var(--line); }
 }
+.btlog summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 6px 0; }
+.btlog pre { max-height: 220px; overflow: auto; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; background: rgba(127,127,127,.12); border-radius: 8px; padding: 8px; margin: 4px 0 8px; }

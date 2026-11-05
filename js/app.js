@@ -4,10 +4,10 @@ import {
   SIZES, sizeById, labelDots, mmToDots, openSource, findCropAreas, composeLabel, toMono, monoToCanvas,
   thumbFromMono, makeCanvas, packBits,
 } from './image.js';
-import { Printer, buildTspl, buildFeed, support } from './printer.js';
+import { Printer, buildTspl, buildFeed, support, btLog } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1024,3 +1024,26 @@ start();
 
 // exported for checks
 window.__asbb = { buildTspl, packBits, findCropAreas };
+
+// ---------- Bluetooth log (Settings) ----------
+function showBtLog() {
+  const box = document.querySelector('#btLog');
+  if (box) box.textContent = btLog.length ? btLog.join('\n') : 'Nothing yet. Connect the printer and press Test print.';
+}
+window.addEventListener('asbb-btlog', showBtLog);
+showBtLog();
+document.querySelector('#btLogCopy')?.addEventListener('click', async () => {
+  const text = `ASBB Print ${VERSION}\n${navigator.userAgent}\n${btLog.join('\n')}`;
+  const btn = document.querySelector('#btLogCopy');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied ✓';
+  } catch {
+    const r = document.createRange();
+    r.selectNodeContents(document.querySelector('#btLog'));
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    btn.textContent = 'Selected: press Copy';
+  }
+  setTimeout(() => (btn.textContent = 'Copy log'), 2500);
+});
