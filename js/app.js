@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support, btLog } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.2.5';
+const VERSION = '1.2.6';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

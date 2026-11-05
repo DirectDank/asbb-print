@@ -28,9 +28,13 @@ export const support = {
 export const btLog = [];
 const t0 = Date.now();
 export function logBt(msg) {
-  const line = `${((Date.now() - t0) / 1000).toFixed(1)}s ${msg}`;
-  btLog.push(line);
-  if (btLog.length > 120) btLog.splice(0, btLog.length - 120);
+  const at = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+  // The same message again (like the printer's "ready" replies) adds a count instead of a new line.
+  const last = btLog[btLog.length - 1];
+  const m = last && /^(\S+) (.*?)(?: ×(\d+))?$/.exec(last);
+  if (m && m[2] === msg) btLog[btLog.length - 1] = `${m[1]} ${msg} ×${(+m[3] || 1) + 1}`;
+  else btLog.push(`${at} ${msg}`);
+  if (btLog.length > 400) btLog.splice(0, btLog.length - 400);
   try { window.dispatchEvent(new Event('asbb-btlog')); } catch { /* not in a page */ }
 }
 const errText = (e) => (e && (e.name ? `${e.name}: ${e.message}` : e.message)) || String(e);
@@ -193,6 +197,8 @@ class BleTransport {
             const v = new Uint8Array(ev.target.value.buffer);
             const text = Array.from(v, (b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : `<${b.toString(16).padStart(2, '0')}>`)).join('');
             logBt(`printer says (${c.uuid.slice(4, 8)}): ${text.slice(0, 80)}`);
+            this.replies = (this.replies || 0) + 1;
+            if (this.onReply) this.onReply();
           });
           c.listening = true;
         }
@@ -215,6 +221,11 @@ class BleTransport {
     let size = this.size ?? 0;
     let withResp = this.withResp ?? !!this.ch.properties.write;
     let fails = 0;
+    const RATE = 4; // bytes per millisecond
+    const started = Date.now();
+    let sent = 0;
+    let pieces = 0;
+    this.replies = 0;
     for (let i = 0; i < data.length; ) {
       const part = data.subarray(i, i + sizes[size]);
       try {
@@ -223,6 +234,13 @@ class BleTransport {
           await this.ch.writeValueWithoutResponse(part);
           if ((i / sizes[size]) % 8 === 7) await sleep(20);
         }
+        // The printer's Bluetooth chip passes data on to the printer more slowly than phones send it, and drops
+        // what doesn't fit (47 KB went in 3.6 s and nothing printed). Keep to about 4 KB a second, and when the
+        // log how many "ready" replies come back, to learn what they mean.
+        sent += part.length;
+        pieces++;
+        const ahead = sent / RATE - (Date.now() - started);
+        if (ahead > 0) await sleep(ahead);
         if (i === 0 || fails) logBt(`  piece at ${i} (${part.length} bytes, ${withResp ? 'with' : 'without'} response) ok`);
         i += part.length;
         fails = 0;
@@ -246,9 +264,16 @@ class BleTransport {
         }
       }
     }
-    logBt(`all ${data.length} bytes sent`);
+    logBt(`all ${data.length} bytes sent in ${((Date.now() - started) / 1000).toFixed(1)}s (${pieces} pieces, ${this.replies} replies)`);
     this.size = size;
     this.withResp = withResp;
+  }
+  waitReply(ms) {
+    return new Promise((resolve) => {
+      const seen = this.replies;
+      const timer = setTimeout(() => { this.onReply = null; resolve(false); }, ms);
+      this.onReply = () => { if (this.replies > seen) { clearTimeout(timer); this.onReply = null; resolve(true); } };
+    });
   }
   async close() { try { this.device.gatt.disconnect(); } catch { /* ignore */ } }
 }
