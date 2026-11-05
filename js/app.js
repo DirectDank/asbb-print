@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -81,8 +81,12 @@ function updatePrinterUi() {
 printer.on(updatePrinterUi);
 
 async function connect(kind) {
+  // Bluetooth Classic (Web Serial) isn't in every Chrome build yet; fall back to Bluetooth LE automatically.
+  if (kind === 'serial' && !support.serial) {
+    if (support.ble) { toast('Trying Bluetooth LE…'); kind = 'ble'; }
+  }
   try {
-    if (kind === 'serial' && !support.serial) throw new Error('Bluetooth printers need Chrome on Android (version 148 or newer) or Chrome/Edge on a computer. Update Chrome and try again.');
+    if (kind === 'serial' && !support.serial) throw new Error('This browser can’t reach Bluetooth printers. Open ASBB Print in Chrome on Android, or on a computer in Chrome or Edge.');
     if (kind === 'ble' && !support.ble) throw new Error('Bluetooth LE isn’t available in this browser.');
     if (kind === 'usb' && !support.usb) throw new Error('USB printing isn’t available in this browser.');
     await printer.connect(kind);
@@ -90,9 +94,27 @@ async function connect(kind) {
     persist();
     toast('Printer connected');
   } catch (e) {
-    if (e && e.name === 'NotFoundError') { toast(kind === 'serial' ? 'No printer chosen. Is it paired in your phone’s Bluetooth settings?' : 'No printer chosen', true, 4200); return; }
-    toast(e.message || String(e), true, 5000);
+    console.warn('connect failed', kind, e);
+    lastError = `${kind}: ${e && e.name ? e.name + ' – ' : ''}${e && e.message ? e.message : e}`;
+    showDiag();
+    if (e && e.name === 'NotFoundError') {
+      toast(kind === 'serial'
+        ? 'Printer not listed? Check it’s paired in your phone’s Bluetooth settings, or try “Bluetooth LE”.'
+        : 'No printer chosen. Is it switched on and close by?', true, 6000);
+      return;
+    }
+    if (e && (e.name === 'SecurityError' || e.name === 'NotAllowedError')) {
+      toast('Chrome needs Bluetooth permission: phone Settings → Apps → Chrome → Permissions → Nearby devices → Allow.', true, 8000);
+      return;
+    }
+    toast(e.message || String(e), true, 6000);
   }
+}
+let lastError = '';
+function showDiag() {
+  const m = navigator.userAgent.match(/Chrome\/(\d+)/);
+  const yes = (b) => (b ? 'yes' : 'no');
+  $('#diag').textContent = `Chrome ${m ? m[1] : '?'} · Bluetooth: ${yes(support.serial)} · Bluetooth LE: ${yes(support.ble)} · USB: ${yes(support.usb)}${lastError ? ` · Last error: ${lastError}` : ''}`;
 }
 $('#connSerial').addEventListener('click', () => connect('serial'));
 $('#connBle').addEventListener('click', () => connect('ble'));
@@ -189,6 +211,7 @@ function openSettings() {
   $('#installBtn2').hidden = !installEvt;
   renderCustomSizes();
   updatePrinterUi();
+  showDiag();
   openModal('#settingsModal');
 }
 $('#settingsBtn').addEventListener('click', openSettings);
@@ -952,7 +975,15 @@ async function start() {
   if (act === 'design') openDesigner(null);
   if (act === 'label') setTimeout(() => toast('Tap “Shipping label” to pick your file'), 300);
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // When an update lands, reload once so the new version is used straight away.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded && !printing) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
+  }
 }
 start();
 
