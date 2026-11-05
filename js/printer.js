@@ -130,16 +130,33 @@ class BleTransport {
   async write(data) {
     await this.open();
     // Write-with-response gives natural flow control (what Labelife does); fall back to without-response.
-    const withResp = this.ch.properties.write;
-    const chunk = withResp ? 240 : 180;
-    for (let i = 0; i < data.length; i += chunk) {
-      const part = data.subarray(i, i + chunk);
-      if (withResp) await this.ch.writeValueWithResponse(part);
-      else {
-        await this.ch.writeValueWithoutResponse(part);
-        if ((i / chunk) % 8 === 7) await sleep(20);
+    // A printer that refuses a piece ("GATT operation failed") is sent smaller pieces, down to 20 bytes, then
+    // without-response; the size that works is kept for the next print.
+    const sizes = [240, 180, 100, 60, 20];
+    let size = this.size ?? 0;
+    let withResp = this.withResp ?? !!this.ch.properties.write;
+    let fails = 0;
+    for (let i = 0; i < data.length; ) {
+      const part = data.subarray(i, i + sizes[size]);
+      try {
+        if (withResp) await this.ch.writeValueWithResponse(part);
+        else {
+          await this.ch.writeValueWithoutResponse(part);
+          if ((i / sizes[size]) % 8 === 7) await sleep(20);
+        }
+        i += part.length;
+        fails = 0;
+      } catch (e) {
+        if (++fails > 12) throw e;
+        if (size < sizes.length - 1) size++;
+        else if (withResp && this.ch.properties.writeWithoutResponse) { withResp = false; size = 0; }
+        else if (fails > 3) throw e;
+        await sleep(150);
+        if (!this.device.gatt.connected) { this.ch = null; await this.open(); }
       }
     }
+    this.size = size;
+    this.withResp = withResp;
   }
   async close() { try { this.device.gatt.disconnect(); } catch { /* ignore */ } }
 }
