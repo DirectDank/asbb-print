@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -395,6 +395,10 @@ async function openJobFromFile(file) {
     busy.hidden = false;
     const source = await openSource(file);
     job = { kind: 'crop', title: (file.name || 'Label').replace(/\.[a-z0-9]+$/i, ''), file, source, page: 0, opts: defaultJobOpts(), cache: new Map(), areas: new Map(), project: null };
+    // A PDF already made at label size (like the 4 x 6 labels and packing slips from allsortsbyben.co.uk) prints each
+    // page whole, with nothing cut away; only big pages (A4 and the like) are cropped to the label.
+    const ps = source.pageSize;
+    if (ps && Math.max(ps.w, ps.h) <= 7 * 72 && Math.min(ps.w, ps.h) <= 5 * 72) { job.opts.crop = 'none'; job.opts.pages = 'all'; }
     await setupJobUi();
   } catch (e) {
     toast(`Couldn’t open that file: ${e.message}`, true, 5000);
@@ -943,6 +947,28 @@ window.addEventListener('drop', (e) => {
   if (f && (/pdf|image/.test(f.type))) openJobFromFile(f);
 });
 
+// ---------- files from the shop ----------
+// Only these sites can hand ASBB Print a file by link (anything else could be anyone's file).
+const LINK_HOSTS = ['allsortsbyben.co.uk', 'www.allsortsbyben.co.uk'];
+async function openFromLink(raw) {
+  let url;
+  try { url = new URL(raw); } catch { toast('That link isn’t a labels file', true); return; }
+  if (url.protocol !== 'https:' || !LINK_HOSTS.includes(url.hostname)) { toast('Only labels from allsortsbyben.co.uk can be opened by link', true, 5000); return; }
+  try {
+    toast('Getting the labels…');
+    const res = await fetch(url.href, { mode: 'cors', credentials: 'omit', cache: 'no-store' });
+    if (!res.ok) {
+      const msg = await res.json().then((d) => d.error).catch(() => '');
+      throw new Error(msg || `the shop said ${res.status}`);
+    }
+    const blob = await res.blob();
+    const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1] || 'labels.pdf';
+    await openJobFromFile(new File([blob], name, { type: blob.type || 'application/pdf' }));
+  } catch (e) {
+    toast(`Couldn’t open the labels: ${e.message}`, true, 6000);
+  }
+}
+
 // ---------- start ----------
 async function start() {
   $('#appVersion').textContent = VERSION;
@@ -971,6 +997,12 @@ async function start() {
         openJobFromFile(new File([blob], name, { type: blob.type }));
       }
     } catch (e) { toast('Couldn’t open the shared file', true); }
+  }
+  // A labels file from allsortsbyben.co.uk (the "Open in ASBB Print" buttons in its Telegram bot and admin page)
+  const openUrl = new URLSearchParams(location.search).get('open');
+  if (openUrl) {
+    history.replaceState({ view: 'home' }, '', location.pathname);
+    await openFromLink(openUrl);
   }
   // launch shortcuts
   const act = new URLSearchParams(location.search).get('action');

@@ -41,8 +41,11 @@ export async function openSource(file) {
   if (isPdf) {
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const cache = new Map();
+    const first = (await pdf.getPage(1)).getViewport({ scale: 1 });
     return {
       kind: 'pdf',
+      // The first page's size in points (72 to the inch), e.g. 288 x 432 for a ready-made 4 x 6 label.
+      pageSize: { w: first.width, h: first.height },
       count: Math.min(pdf.numPages, 300),
       async page(i) {
         if (cache.has(i)) return cache.get(i);
