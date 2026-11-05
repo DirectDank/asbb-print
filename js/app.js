@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -92,6 +92,7 @@ async function connect(kind) {
     await printer.connect(kind);
     settings.transport = kind;
     persist();
+    if (printer.t && printer.t.channels) { lastError = ''; $('#diag').textContent = ''; showDiag(); $('#diag').textContent += ` \u00b7 LE channel ${printer.t.channel} of ${printer.t.channels.join(', ')}`; }
     toast('Printer connected');
   } catch (e) {
     console.warn('connect failed', kind, e);

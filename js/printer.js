@@ -93,13 +93,20 @@ class BleTransport {
     if (this.ch && this.device.gatt.connected) return;
     const server = await this.device.gatt.connect();
     const services = await server.getPrimaryServices();
-    for (const s of services) {
+    // Known print channels first (Phomemo/Aimo use ff00/ff02, others ffe0/ffe1, ae30/ae01, 18f0/2af1...).
+    const preferred = ['ff02', 'ffe1', 'ae01', '2af1', 'fec7', 'ae3b', '49535343-8841', 'bef8d6c9'];
+    const found = [];
+    for (const sv of services) {
       let chars = [];
-      try { chars = await s.getCharacteristics(); } catch { continue; }
-      const c = chars.find((x) => x.properties.writeWithoutResponse) || chars.find((x) => x.properties.write);
-      if (c) { this.ch = c; return; }
+      try { chars = await sv.getCharacteristics(); } catch { continue; }
+      for (const c of chars) if (c.properties.writeWithoutResponse || c.properties.write) found.push(c);
     }
-    throw new Error('Connected, but this printer has no Bluetooth LE print channel. Use “Bluetooth” instead.');
+    this.channels = found.map((c) => `${c.service.uuid.slice(4, 8)}/${c.uuid.slice(4, 8)}`);
+    if (!found.length) throw new Error('Connected, but this printer has no Bluetooth LE print channel. Use \u201cBluetooth\u201d instead.');
+    const rank = (c) => { const i = preferred.findIndex((p) => c.uuid.includes(p)); return i < 0 ? 99 : i; };
+    found.sort((a, b) => rank(a) - rank(b));
+    this.ch = found[0];
+    this.channel = `${this.ch.service.uuid.slice(4, 8)}/${this.ch.uuid.slice(4, 8)}`;
   }
   async write(data) {
     await this.open();
