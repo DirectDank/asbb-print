@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support, btLog } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.2.6';
+const VERSION = '1.2.7';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -209,7 +209,7 @@ function openSettings() {
   $('#sSpeed').value = settings.speed;
   $('#sOffX').value = settings.offsetXmm; $('#sOffY').value = settings.offsetYmm;
   $('#sFlip').checked = settings.flip; $('#sInvert').checked = settings.invert;
-  $('#sFormat').value = settings.format || 'lzo';
+  $('#sFormat').value = settings.format || 'plain';
   $('#installBtn2').hidden = !installEvt;
   renderCustomSizes();
   updatePrinterUi();

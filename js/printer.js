@@ -188,6 +188,9 @@ class BleTransport {
     this.pick = Math.min(this.pick ?? 0, found.length - 1);
     this.ch = found[this.pick];
     this.channel = `${this.ch.service.uuid.slice(4, 8)}/${this.ch.uuid.slice(4, 8)}`;
+    this.credits = 0;
+    this.creditMode = false;
+    this.replies = 0;
     // Labelife listens on the printer's reply channel (ff01) before sending; some printers won't take data until
     // someone is listening, so switch replies on for every channel in the print service that offers them.
     for (const c of notify.filter((c) => c.service.uuid === this.ch.service.uuid)) {
@@ -196,8 +199,12 @@ class BleTransport {
           c.addEventListener('characteristicvaluechanged', (ev) => {
             const v = new Uint8Array(ev.target.value.buffer);
             const text = Array.from(v, (b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : `<${b.toString(16).padStart(2, '0')}>`)).join('');
-            logBt(`printer says (${c.uuid.slice(4, 8)}): ${text.slice(0, 80)}`);
+            if (!(v[0] === 1 && v.length === 2 && this.sending)) logBt(`printer says (${c.uuid.slice(4, 8)}): ${text.slice(0, 80)}`);
             this.replies = (this.replies || 0) + 1;
+            // The printer's Bluetooth chip runs credit flow control: 01 n = "n more pieces welcome",
+            // 02 lo hi = the biggest piece it takes. Sending exactly as fast as it asks is the quickest safe speed.
+            if (v[0] === 1 && v.length === 2) { this.credits = (this.credits || 0) + v[1]; this.creditMode = true; }
+            else if (v[0] === 2 && v.length === 3) this.maxPiece = Math.max(20, Math.min(240, v[1] | (v[2] << 8)) - 4);
             if (this.onReply) this.onReply();
           });
           c.listening = true;
@@ -213,64 +220,72 @@ class BleTransport {
   }
   async write(data) {
     await this.open();
+    if (this.creditMode) return this.writeCredits(data);
     logBt(`sending ${data.length} bytes on ${this.channel}`);
-    // Write-with-response gives natural flow control (what Labelife does); fall back to without-response.
-    // A printer that refuses a piece ("GATT operation failed") is sent smaller pieces, down to 20 bytes, then
-    // without-response, then the next write channel; what works is kept for the next print.
     const sizes = [240, 180, 100, 60, 20];
     let size = this.size ?? 0;
     let withResp = this.withResp ?? !!this.ch.properties.write;
     let fails = 0;
-    const RATE = 4; // bytes per millisecond
+    const RATE = 4; // bytes per millisecond, for printers without credit flow control
     const started = Date.now();
     let sent = 0;
-    let pieces = 0;
-    this.replies = 0;
     for (let i = 0; i < data.length; ) {
       const part = data.subarray(i, i + sizes[size]);
       try {
         if (withResp) await this.ch.writeValueWithResponse(part);
-        else {
-          await this.ch.writeValueWithoutResponse(part);
-          if ((i / sizes[size]) % 8 === 7) await sleep(20);
-        }
-        // The printer's Bluetooth chip passes data on to the printer more slowly than phones send it, and drops
-        // what doesn't fit (47 KB went in 3.6 s and nothing printed). Keep to about 4 KB a second, and when the
-        // log how many "ready" replies come back, to learn what they mean.
+        else await this.ch.writeValueWithoutResponse(part);
         sent += part.length;
-        pieces++;
         const ahead = sent / RATE - (Date.now() - started);
         if (ahead > 0) await sleep(ahead);
-        if (i === 0 || fails) logBt(`  piece at ${i} (${part.length} bytes, ${withResp ? 'with' : 'without'} response) ok`);
         i += part.length;
         fails = 0;
       } catch (e) {
-        logBt(`  piece at ${i} (${part.length} bytes, ${withResp ? 'with' : 'without'} response) failed: ${errText(e)}; link ${this.device.gatt.connected ? 'still up' : 'dropped'}`);
+        logBt(`  piece at ${i} (${part.length} bytes) failed: ${errText(e)}; link ${this.device.gatt.connected ? 'still up' : 'dropped'}`);
         if (++fails > 14) throw e;
         if (size < sizes.length - 1) size++;
         else if (withResp && this.ch.properties.writeWithoutResponse) { withResp = false; size = 0; }
-        else if (this.found && this.pick < this.found.length - 1) {
-          this.pick++;
-          this.ch = null;
-          size = 0;
-          withResp = true;
-          logBt('trying the next write channel');
-        } else if (fails > 3) throw e;
+        else if (fails > 3) throw e;
         await sleep(300);
-        if (!this.ch || !this.device.gatt.connected) {
-          this.ch = null;
-          await this.open();
-          withResp = withResp && !!this.ch.properties.write;
-        }
+        if (!this.device.gatt.connected) { this.ch = null; await this.open(); }
       }
     }
-    logBt(`all ${data.length} bytes sent in ${((Date.now() - started) / 1000).toFixed(1)}s (${pieces} pieces, ${this.replies} replies)`);
+    logBt(`all ${data.length} bytes sent in ${((Date.now() - started) / 1000).toFixed(1)}s`);
     this.size = size;
     this.withResp = withResp;
   }
+  // Credit flow control: send a piece only while the printer has said it has room, as fast as it frees room.
+  async writeCredits(data) {
+    const piece = this.maxPiece || 240;
+    const fast = !!this.ch.properties.writeWithoutResponse;
+    logBt(`sending ${data.length} bytes on ${this.channel} (${piece}-byte pieces, as fast as the printer asks)`);
+    const started = Date.now();
+    let waits = 0;
+    this.sending = true;
+    try {
+      for (let i = 0; i < data.length; ) {
+        if (!this.device.gatt.connected) throw new Error('the printer dropped the Bluetooth link');
+        if ((this.credits || 0) <= 0) {
+          const got = await this.waitReply(3000);
+          if (!got && (this.credits || 0) <= 0) { waits++; this.credits = 1; } // no word for 3 s: try one piece anyway
+          continue;
+        }
+        const part = data.subarray(i, i + piece);
+        this.credits--;
+        if (fast) await this.ch.writeValueWithoutResponse(part);
+        else await this.ch.writeValueWithResponse(part);
+        i += part.length;
+      }
+    } catch (e) {
+      logBt(`sending failed: ${errText(e)}`);
+      throw e;
+    } finally {
+      this.sending = false;
+    }
+    logBt(`all ${data.length} bytes sent in ${((Date.now() - started) / 1000).toFixed(1)}s${waits ? ` (${waits} long waits)` : ''}`);
+  }
   waitReply(ms) {
     return new Promise((resolve) => {
-      const seen = this.replies;
+      const seen = this.replies || 0;
       const timer = setTimeout(() => { this.onReply = null; resolve(false); }, ms);
       this.onReply = () => { if (this.replies > seen) { clearTimeout(timer); this.onReply = null; resolve(true); } };
     });
@@ -383,7 +398,7 @@ export function buildTspl(pages, opts) {
   const parts = [];
   const txt = (s) => parts.push(enc.encode(s));
   const mm2 = (n) => (Math.round(n * 100) / 100).toFixed(2);
-  const plain = opts.format === 'plain';
+  const plain = opts.format !== 'lzo';
   for (const p of pages) {
     const m = p.mono;
     txt('\r\n');
