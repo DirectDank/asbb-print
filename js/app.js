@@ -7,7 +7,7 @@ import {
 import { Printer, buildTspl, buildFeed, support } from './printer.js';
 import { Editor, renderDesign, newElement, packingSlipDesign, parseCsv, FONTS, elId } from './designer.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -75,7 +75,7 @@ function updatePrinterUi() {
   chip.classList.toggle('on', printer.connected);
   chip.querySelector('.chip-text').textContent = printer.connected ? printer.name : 'Connect printer';
   const st = $('#printerStatus');
-  st.textContent = printer.connected ? `Connected: ${printer.name} (${{ serial: 'Bluetooth', ble: 'Bluetooth LE', usb: 'USB' }[printer.kind]})` : 'Not connected';
+  st.textContent = printer.connected ? `Connected: ${printer.name} (${{ serial: 'Bluetooth Classic', ble: 'Bluetooth LE', usb: 'USB' }[printer.kind]})` : 'Not connected';
   st.classList.toggle('ok', printer.connected);
 }
 printer.on(updatePrinterUi);

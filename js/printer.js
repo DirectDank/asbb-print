@@ -25,6 +25,16 @@ export const support = {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(what)), ms))]);
+
+// The printer last chosen in the picker, so reopening the app goes back to that one printer and no other.
+const REMEMBER = 'asbb-print-printer';
+function remembered() {
+  try { return JSON.parse(localStorage.getItem(REMEMBER) || 'null'); } catch { return null; }
+}
+function remember(t) {
+  try { localStorage.setItem(REMEMBER, JSON.stringify({ kind: t.kind, id: t.device?.id || '', name: t.name })); } catch { /* not kept */ }
+}
 
 // ---------- transports ----------
 class SerialTransport {
@@ -42,8 +52,8 @@ class SerialTransport {
     await t.open();
     return t;
   }
-  static async restore() {
-    if (!support.serial) return null;
+  static async restore(want) {
+    if (!support.serial || want?.kind !== 'serial') return null;
     const ports = await navigator.serial.getPorts();
     if (!ports.length) return null;
     const port = ports.find((p) => (p.getInfo().bluetoothServiceClassId || '').toLowerCase() === SPP_UUID) || ports[0];
@@ -51,7 +61,11 @@ class SerialTransport {
   }
   async open() {
     if (this.port.writable) return;
-    await this.port.open({ baudRate: 115200, bufferSize: 65536 });
+    try {
+      await this.port.open({ baudRate: 115200, bufferSize: 65536 });
+    } catch (e) {
+      throw new Error('it wouldn’t connect over Bluetooth Classic. Tap the printer at the top, Disconnect, then Connect Bluetooth printer (Bluetooth LE) and pick it');
+    }
   }
   async write(data) {
     await this.open();
@@ -73,7 +87,7 @@ class SerialTransport {
 function portName(port) {
   try {
     const i = port.getInfo();
-    if (i.bluetoothServiceClassId) return 'Bluetooth printer';
+    if (i.bluetoothServiceClassId) return 'Bluetooth Classic printer';
     if (i.usbVendorId) return 'USB serial printer';
   } catch { /* ignore */ }
   return 'Printer';
@@ -87,10 +101,12 @@ class BleTransport {
     await t.open();
     return t;
   }
-  static async restore() {
+  static async restore(want) {
     if (!support.ble || !navigator.bluetooth.getDevices) return null;
     const list = await navigator.bluetooth.getDevices().catch(() => []);
-    return list.length ? new BleTransport(list[0]) : null;
+    // Only the printer chosen before (by its id, or its name), never just the first device Chrome remembers.
+    const d = list.find((x) => want?.id && x.id === want.id) || list.find((x) => want?.name && x.name === want.name);
+    return d ? new BleTransport(d) : null;
   }
   async open() {
     if (this.ch && this.device.gatt.connected) return;
@@ -180,19 +196,26 @@ export class Printer {
     if (!T) throw new Error('Unknown connection type');
     if (this.t) await this.t.close();
     this.t = await T.request();
+    remember(this.t);
     this.emit();
     return this.t;
   }
-  // Re-use a printer chosen before, without the picker (best effort).
-  async restore(kind) {
-    const order = kind ? [kind, ...Object.keys(TRANSPORTS).filter((k) => k !== kind)] : Object.keys(TRANSPORTS);
-    for (const k of order) {
-      try {
-        const t = await TRANSPORTS[k].restore();
-        if (t) { this.t = t; this.emit(); return t; }
-      } catch { /* try next */ }
+  // Re-use the printer chosen before, without the picker. It only counts as connected once it has actually
+  // answered: a printer that is off or out of range shows as not connected, rather than "connected" with prints
+  // going nowhere (as happened after the 1.2.0 update reloaded the app).
+  async restore() {
+    const want = remembered();
+    if (!want || !TRANSPORTS[want.kind]) return null;
+    try {
+      const t = await TRANSPORTS[want.kind].restore(want);
+      if (!t) return null;
+      await withTimeout(t.open(), 10000, 'The printer didn’t answer');
+      this.t = t;
+      this.emit();
+      return t;
+    } catch {
+      return null;
     }
-    return null;
   }
   async disconnect() { if (this.t) await this.t.close(); this.t = null; this.emit(); }
   async send(bytes) {
@@ -200,10 +223,17 @@ export class Printer {
     try {
       await this.t.write(bytes);
     } catch (e) {
-      // One reconnect attempt (printer may have slept).
+      // One reconnect attempt (printer may have slept). If that fails too, it shows as not connected, so the next
+      // press of Print asks for it to be connected again rather than trying a dead link.
       try { await this.t.close(); } catch { /* ignore */ }
       await sleep(400);
-      await this.t.write(bytes);
+      try {
+        await this.t.write(bytes);
+      } catch (e2) {
+        this.t = null;
+        this.emit();
+        throw new Error(`the printer didn’t answer (${(e2 && e2.message) || e2}). Tap Connect printer and choose it again`);
+      }
     }
   }
 }

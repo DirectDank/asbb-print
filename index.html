@@ -182,13 +182,13 @@
       <h3>Printer</h3>
       <p id="printerStatus" class="status">Not connected</p>
       <div class="stack">
-        <button class="btn primary" id="connSerial">Connect Bluetooth printer</button>
+        <button class="btn primary" id="connBle">Connect Bluetooth printer</button>
         <div class="row-btns">
-          <button class="btn ghost small" id="connBle">Bluetooth LE</button>
+          <button class="btn ghost small" id="connSerial">Bluetooth Classic</button>
           <button class="btn ghost small" id="connUsb">USB cable</button>
           <button class="btn ghost small" id="connOff">Disconnect</button>
         </div>
-        <p class="hint">First time: pair the printer in your phone's Bluetooth settings (it shows as <b>PM-241…</b>), then tap <b>Connect Bluetooth printer</b> and pick it.</p>
+        <p class="hint">Switch the printer on, tap <b>Connect Bluetooth printer</b> and pick it from the list (the PM-241 shows as <b>PM2410BT…</b>). No pairing in your phone's settings is needed. If it isn't listed, try <b>Bluetooth Classic</b> after pairing it in your phone's Bluetooth settings.</p>
         <p class="hint small" id="diag"></p>
         <div class="row-btns">
           <button class="btn ghost small" id="testPrint">Test print</button>
