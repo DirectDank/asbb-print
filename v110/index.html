@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ASBB Print</title>
+  <meta name="description" content="Free label printing for Phomemo PM-241 and other TSPL thermal printers. Auto-crop shipping labels, design labels and save projects. No subscription. By All Sorts by Ben.">
+  <meta name="theme-color" content="#000000">
+  
+  <link rel="icon" href="img/icon-192.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,600;0,700;1,400;1,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/qrcode.js" defer></script>
+  <script src="vendor/JsBarcode.all.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="brand" id="homeBtn" aria-label="ASBB Print home">
+      <img src="img/asbb-logo.svg" alt="ASBB" class="brand-logo">
+      <span class="brand-word">Print</span>
+    </button>
+    <div class="topbar-actions">
+      <button class="chip" id="printerChip" aria-label="Printer connection"><span class="dot"></span><span class="chip-text">Connect printer</span></button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <!-- HOME -->
+  <main id="view-home" class="view">
+    <section class="actions">
+      <button class="action neon" id="actLabel">
+        <span class="action-icon">⇲</span>
+        <span class="action-title">Shipping label</span>
+        <span class="action-sub">Open a PDF or screenshot — auto-cropped to fit</span>
+      </button>
+      <button class="action" id="actDesign">
+        <span class="action-icon">✎</span>
+        <span class="action-title">Design a label</span>
+        <span class="action-sub">Text, logos, QR codes, barcodes</span>
+      </button>
+      <button class="action" id="actSlip">
+        <span class="action-icon">✉</span>
+        <span class="action-title">Packing slip</span>
+        <span class="action-sub">One tap thank-you slip</span>
+      </button>
+      <button class="action" id="actTest">
+        <span class="action-icon">✓</span>
+        <span class="action-title">Test print</span>
+        <span class="action-sub">Check the printer is working</span>
+      </button>
+    </section>
+    <input type="file" id="fileInput" accept="application/pdf,image/*" hidden>
+
+    <div id="installBanner" class="install-banner" hidden>
+      <span>Add ASBB Print to your home screen for one-tap access.</span>
+      <button class="btn small" id="installBtn">Install</button>
+    </div>
+    <div id="backupBanner" class="install-banner" hidden>
+      <span>You've saved new projects. Back them up so they're safe if Chrome data is cleared.</span>
+      <button class="btn small" id="backupNowBtn">Back up</button>
+    </div>
+
+    <section class="projects">
+      <div class="section-head">
+        <h2>Your projects</h2>
+        <input type="search" id="projectSearch" placeholder="Search" aria-label="Search projects">
+      </div>
+      <div id="projectGrid" class="grid"></div>
+      <p id="projectsEmpty" class="empty" hidden>Saved labels show here. Open one and tap <b>Print</b> to print it again in seconds.</p>
+    </section>
+
+    <footer class="foot">
+      <a href="https://allsortsbyben.co.uk" target="_blank" rel="noopener">ASBB Print · by All Sorts by Ben</a>
+      <span>Free, no subscription. Your labels never leave your phone.</span>
+    </footer>
+  </main>
+
+  <!-- PRINT / PREVIEW -->
+  <main id="view-job" class="view" hidden>
+    <div class="subbar">
+      <button class="icon-btn" data-back aria-label="Back">‹</button>
+      <h1 id="jobTitle">Label</h1>
+      <div class="pager" id="pager" hidden>
+        <button class="icon-btn" id="pgPrev" aria-label="Previous page">‹</button>
+        <span id="pgText">1 / 1</span>
+        <button class="icon-btn" id="pgNext" aria-label="Next page">›</button>
+      </div>
+    </div>
+    <div class="stage"><div class="paper"><canvas id="jobCanvas"></canvas></div></div>
+    <div id="jobBusy" class="busy" hidden>Working…</div>
+
+    <div class="panel" id="jobControls">
+      <label class="field"><span>Label size</span><select id="jobSize"></select></label>
+      <div class="field" id="cropField">
+        <span>Crop</span>
+        <div class="seg" id="cropSeg">
+          <button data-v="auto" class="on">Auto</button><button data-v="none">Whole page</button><button data-v="manual">Manual</button>
+        </div>
+        <div class="row-btns">
+          <button class="btn ghost small" id="nextArea">Try next area</button>
+          <button class="btn ghost small" id="editCrop">Adjust crop</button>
+        </div>
+      </div>
+      <div class="field" id="rotField">
+        <span>Rotate</span>
+        <div class="seg" id="rotSeg"><button data-v="auto" class="on">Auto</button><button data-v="0">0°</button><button data-v="90">90°</button><button data-v="180">180°</button><button data-v="270">270°</button></div>
+      </div>
+      <div class="field" id="fitField">
+        <span>Fit</span>
+        <div class="seg" id="fitSeg"><button data-v="fit" class="on">Fit</button><button data-v="fill">Fill</button><button data-v="stretch">Stretch</button></div>
+      </div>
+      <label class="field" id="marginField"><span>Margin <output id="marginOut">2 mm</output></span><input type="range" id="jobMargin" min="0" max="10" step="0.5" value="2"></label>
+      <div class="field">
+        <span>Look</span>
+        <div class="seg" id="lookSeg"><button data-v="sharp" class="on">Sharp (barcodes)</button><button data-v="photo">Photo</button></div>
+      </div>
+      <label class="field" id="levelField"><span>Darkness of greys <output id="levelOut">160</output></span><input type="range" id="jobLevel" min="80" max="230" step="5" value="160"></label>
+      <div class="field two">
+        <label><span>Copies</span>
+          <div class="stepper"><button id="cMinus" aria-label="Fewer">−</button><input id="jobCopies" type="number" min="1" max="999" value="1" inputmode="numeric"><button id="cPlus" aria-label="More">+</button></div>
+        </label>
+        <label id="pagesField"><span>Pages</span><select id="jobPages"><option value="all">All pages</option><option value="current">This page only</option></select></label>
+      </div>
+      <label class="field"><span>Packing slip after each label</span><select id="jobSlip"><option value="">None</option></select></label>
+    </div>
+    <div class="dock">
+      <button class="btn ghost" id="jobSave">Save project</button>
+      <button class="btn primary" id="jobPrint">Print</button>
+    </div>
+  </main>
+
+  <!-- DESIGNER -->
+  <main id="view-design" class="view" hidden>
+    <div class="subbar">
+      <button class="icon-btn" data-back aria-label="Back">‹</button>
+      <input id="dName" class="title-input" value="New label" aria-label="Project name">
+      <select id="dSize" class="mini-select" aria-label="Label size"></select>
+    </div>
+    <div class="stage"><div class="paper"><canvas id="dCanvas"></canvas></div></div>
+    <div class="toolbar" id="dTools">
+      <button data-add="text">Text</button>
+      <button data-add="image">Image</button>
+      <button data-add="logo">Logo</button>
+      <button data-add="qr">QR</button>
+      <button data-add="barcode">Barcode</button>
+      <button data-add="rect">Box</button>
+      <button data-add="line">Line</button>
+      <button id="dData">Data</button>
+    </div>
+    <input type="file" id="dImageInput" accept="image/*" hidden>
+    <input type="file" id="dCsvInput" accept=".csv,text/csv" hidden>
+    <div class="panel" id="dProps"><p class="hint">Tap something on the label to edit it, drag to move, and drag the pink dot to resize.</p></div>
+    <div class="dock">
+      <button class="btn ghost" id="dSave">Save project</button>
+      <button class="btn primary" id="dPrint">Preview &amp; print</button>
+    </div>
+  </main>
+
+  <!-- CROP EDITOR -->
+  <div id="cropModal" class="modal" hidden>
+    <div class="modal-card wide">
+      <div class="modal-head"><h2>Adjust crop</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <p class="hint">Drag the box to move it, drag the corners to resize. Applies to every page.</p>
+      <div class="crop-wrap"><canvas id="cropCanvas"></canvas></div>
+      <div class="modal-foot"><button class="btn ghost" id="cropReset">Whole page</button><button class="btn primary" id="cropDone">Done</button></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="settingsModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><h2>Settings</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+
+      <h3>Printer</h3>
+      <p id="printerStatus" class="status">Not connected</p>
+      <div class="stack">
+        <button class="btn primary" id="connSerial">Connect Bluetooth printer</button>
+        <div class="row-btns">
+          <button class="btn ghost small" id="connBle">Bluetooth LE</button>
+          <button class="btn ghost small" id="connUsb">USB cable</button>
+          <button class="btn ghost small" id="connOff">Disconnect</button>
+        </div>
+        <p class="hint">First time: pair the printer in your phone's Bluetooth settings (it shows as <b>PM-241…</b>), then tap <b>Connect Bluetooth printer</b> and pick it.</p>
+        <p class="hint small" id="diag"></p>
+        <div class="row-btns">
+          <button class="btn ghost small" id="testPrint">Test print</button>
+          <button class="btn ghost small" id="feedBtn">Feed one label</button>
+        </div>
+      </div>
+
+      <h3>Labels</h3>
+      <label class="field"><span>Default label size</span><select id="sSize"></select></label>
+      <div class="field two">
+        <label><span>Custom width (mm)</span><input type="number" id="cW" min="10" max="120" step="0.1" placeholder="e.g. 70"></label>
+        <label><span>Custom height (mm)</span><input type="number" id="cH" min="10" max="400" step="0.1" placeholder="e.g. 40"></label>
+      </div>
+      <button class="btn ghost small" id="addSize">Add custom size</button>
+      <div id="customList" class="custom-list"></div>
+      <label class="field"><span>Label type</span>
+        <select id="sGapType"><option value="gap">Gaps between labels (most rolls &amp; fanfold)</option><option value="bline">Black mark on the back</option><option value="continuous">Continuous roll</option></select>
+      </label>
+      <label class="field"><span>Gap size <output id="gapOut">3 mm</output></span><input type="range" id="sGap" min="0" max="10" step="0.5" value="3"></label>
+      <label class="field"><span>Print darkness <output id="densOut">8</output></span><input type="range" id="sDensity" min="1" max="15" step="1" value="8"></label>
+      <label class="field"><span>Print speed</span><select id="sSpeed"><option value="">Printer default</option><option value="2">Slow (darker)</option><option value="4">Normal</option><option value="6">Fast</option></select></label>
+      <div class="field two">
+        <label><span>Shift right (mm)</span><input type="number" id="sOffX" min="0" max="20" step="0.5" value="0"></label>
+        <label><span>Shift down (mm)</span><input type="number" id="sOffY" min="-20" max="20" step="0.5" value="0"></label>
+      </div>
+      <label class="field"><span>Printer language</span>
+        <select id="sFormat"><option value="lzo">Phomemo / Labelife printers (default)</option><option value="plain">Standard TSPL (other brands)</option></select>
+      </label>
+      <label class="check"><input type="checkbox" id="sFlip"> Print upside down (flip 180°)</label>
+      <label class="check"><input type="checkbox" id="sInvert"> Test print came out as a negative (fix colours)</label>
+
+      <h3>App</h3>
+      <div class="row-btns">
+        <button class="btn ghost small" id="installBtn2" hidden>Install app</button>
+        <button class="btn ghost small" id="exportBtn">Back up projects</button>
+        <button class="btn ghost small" id="importBtn">Restore backup</button>
+      </div>
+      <input type="file" id="importInput" accept="application/json,.json" hidden>
+      <p class="hint small">ASBB Print works in Chrome on Android and in Chrome or Edge on a computer. iPhone and iPad browsers can't connect to Bluetooth printers.</p>
+      <p class="hint small">Version <span id="appVersion"></span> · <a href="https://allsortsbyben.co.uk" target="_blank" rel="noopener">allsortsbyben.co.uk</a></p>
+    </div>
+  </div>
+
+  <!-- PROJECT MENU -->
+  <div id="menuModal" class="modal" hidden>
+    <div class="modal-card small">
+      <div class="modal-head"><h2 id="menuTitle">Project</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <div class="stack" id="menuItems"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

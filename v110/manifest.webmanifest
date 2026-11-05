@@ -1,0 +1,32 @@
+{
+  "id": "./",
+  "name": "ASBB Print",
+  "short_name": "ASBB Print",
+  "description": "Free label printing for Phomemo PM-241 and other TSPL thermal printers. Auto-crop shipping labels, design labels and save projects. By All Sorts by Ben.",
+  "lang": "en-GB",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "categories": ["productivity", "business", "utilities"],
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "img/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [{ "name": "file", "accept": ["application/pdf", ".pdf", "image/*"] }]
+    }
+  },
+  "shortcuts": [
+    { "name": "Packing slip", "url": "./?action=slip", "icons": [{ "src": "img/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Design a label", "short_name": "Design", "url": "./?action=design", "icons": [{ "src": "img/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
